@@ -1,0 +1,40 @@
+syntax = "proto2";
+package nfc;
+
+message DetectSession {
+  repeated WaitSelectSector wait_select = 1;
+  repeated DefaultResponse dr = 2;
+  repeated WaitCc wait_cc = 3;
+}
+
+//response to WAIT_READ_CC state
+message WaitCc {
+  required int64 hdr_0 = 1;
+  required int64 hdr_1 = 2;
+  required uint32 ack = 3;
+  required Cc3 cc3 = 4; //0x0f index
+  required Cc1 cc1 = 5; //0x0d index
+}
+
+enum Cc3 {
+  RW = 0x00;
+  R0 = 0x01;
+}
+
+enum Cc1 {
+  LEGACY = 0x10;
+  VNO = 0x11;
+  NEW_VNO = 0x12;  
+}
+
+//Generic response of fixed length
+message DefaultResponse {
+  required int64 hdr_0 = 1;
+  required int64 hdr_1 = 2;
+  required uint32 ack = 3;    
+}
+
+//response for wait select sector can be any length
+message WaitSelectSector {
+  required bytes data = 1;
+}

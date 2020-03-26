@@ -1,0 +1,22 @@
+diff --git a/Android.bp b/Android.bp
+index a0f57524b..a99c25f01 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -206,6 +206,7 @@ cc_library {
+     defaults: ["libprotobuf-cpp-full-defaults"],
+     host_supported: true,
+     vendor_available: true,
++	rtti: true,
+     target: {
+         android: {
+             static: {
+@@ -216,6 +217,9 @@ cc_library {
+             enabled: true,
+         },
+     },
++    sanitize: {
++        never: true,
++    },
+ }
+ 
+ // Compiler library for the host

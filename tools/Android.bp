@@ -1,0 +1,128 @@
+cc_defaults {
+    name: "coverage_defaults",
+    native_coverage : true,
+    rtti: true,
+    srcs: [
+        "harness_common.cc",
+        "src/binary_format.cc",
+        "src/text_format.cc",
+        "src/utf8_fix.cc",
+    ],
+    cflags: [
+        "-Wno-multichar",
+        "-Wno-unused-parameter",
+        "-DBUILDCFG=1", 
+        "-DDCHECK_ALWAYS_ON", 
+        "-DGKI_ENABLE_BUF_CORRUPTION_CHECK",
+         "-fprofile-arcs",
+         "-ftest-coverage",
+         "-DFUZZ",
+    ],
+    include_dirs: [
+        "system/nfc/src/include",
+        "system/nfc/src/gki/ulinux",
+        "system/nfc/src/gki/common",
+        "system/nfc/src/nfa/include",
+        "system/nfc/src/nfc/include",
+    ],
+    static_libs: [
+        "libnfcutils",
+    ],
+    shared_libs: [
+        "libnfc-nci-coverage",
+        "libprotobuf-cpp-full",
+    ],
+    ldflags: [
+         "-fprofile-arcs",
+         "-ftest-coverage",
+    ],
+}
+
+cc_binary {
+    name: "nfc_coverage_t2t",
+    defaults: ["coverage_defaults"],
+    srcs: [
+        "coverage_t2t_detect.cc",
+        "harness_t2t_detect.cc",
+        "t2t_detect.pb.cc",
+    ],
+}
+
+cc_defaults {
+    name: "nfc_harness_defaults",
+    srcs: [
+        "harness_common.cc",
+        "src/binary_format.cc",
+        "src/libfuzzer/libfuzzer_macro.cc",
+        "src/libfuzzer/libfuzzer_mutator.cc",
+        "src/mutator.cc",
+        "src/text_format.cc",
+        "src/utf8_fix.cc",
+    ],
+
+    cflags: [
+        "-Wno-multichar",
+        "-Wno-unused-parameter",
+        "-DBUILDCFG=1", 
+        "-DDCHECK_ALWAYS_ON", 
+        "-DGKI_ENABLE_BUF_CORRUPTION_CHECK",
+        "-DFUZZ",
+    ],
+
+    rtti: true,
+
+    include_dirs: [
+        "system/nfc/src/include",
+        "system/nfc/src/gki/ulinux",
+        "system/nfc/src/gki/common",
+        "system/nfc/src/nfa/include",
+        "system/nfc/src/nfc/include",
+    ],
+    static_libs: [
+        "libnfcutils",
+    ],
+    shared_libs: [
+        "libprotobuf-cpp-full",
+    ],
+
+    sanitize : {
+        misc_undefined: [
+            "bounds",
+        ],
+        integer_overflow: true,
+    },
+}
+
+cc_fuzz {
+    name: "t2t_detect_fuzzer",
+    defaults: ["nfc_harness_defaults"],
+    srcs: [
+      "t2t_detect_fuzzer.cc",
+      "harness_t2t_detect.cc",
+      "t2t_detect.pb.cc",
+    ],
+
+    shared_libs: [
+      "libnfc-nci-fuzz",
+    ],
+}
+
+cc_binary {
+    name: "t2t_detect_dbg",
+    defaults: ["nfc_harness_defaults"],
+
+    srcs: [
+        "t2t_detect_dbg.cc",
+        "harness_t2t_detect.cc",
+        "t2t_detect.pb.cc",
+    ],
+
+    cflags: [
+        "-g",
+        "-O0",
+    ],
+
+    shared_libs: [
+        "libnfc-nci-dbg",
+    ],
+}

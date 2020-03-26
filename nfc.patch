@@ -1,0 +1,735 @@
+diff --git a/src/Android.bp b/src/Android.bp
+index 9d2ae92..6d47a52 100644
+--- a/src/Android.bp
++++ b/src/Android.bp
+@@ -1,10 +1,10 @@
+-cc_library_shared {
++cc_defaults {
++    name: "libnfc-nci-defaults",
+     arch: {
+         arm: {
+             instruction_set: "arm",
+         },
+     },
+-    name: "libnfc-nci",
+     shared_libs: [
+         "libcutils",
+         "liblog",
+@@ -63,3 +63,46 @@ cc_library_shared {
+         },
+     },
+ }
++
++cc_library_shared {
++    name: "libnfc-nci",
++    defaults: ["libnfc-nci-defaults"],
++}
++
++cc_library_static {
++    name: "libnfc-nci-static",
++    defaults: ["libnfc-nci-defaults"],
++}
++
++cc_library_shared {
++    name: "libnfc-nci-fuzz",
++    defaults: ["libnfc-nci-defaults"],
++    cflags: [
++        "-DFUZZ",
++        "-DDCHECK_ALWAYS_ON",
++    ],
++
++    sanitize: {
++        misc_undefined: [
++            "bounds",
++        ],
++    }
++}
++
++cc_library_shared {
++    name: "libnfc-nci-dbg",
++    defaults: ["libnfc-nci-defaults"],
++    cflags: [
++        "-g",
++        "-O0",
++        "-DFUZZ",
++        "-DDCHECK_ALWAYS_ON",
++    ],
++}
++
++cc_library_shared {
++  name: "libnfc-nci-coverage",
++  native_coverage: true,
++  defaults: ["libnfc-nci-defaults"],
++  cflags: ["-DFUZZ"],
++}
+diff --git a/src/adaptation/NfcAdaptation.cc b/src/adaptation/NfcAdaptation.cc
+index b0fc549..162d36a 100644
+--- a/src/adaptation/NfcAdaptation.cc
++++ b/src/adaptation/NfcAdaptation.cc
+@@ -375,6 +375,106 @@ void NfcAdaptation::Initialize() {
+   DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", func);
+ }
+ 
++/*******************************************************************************
++**
++** Function:    NfcAdaptation::InitializeFuzzer()
++**
++** Description: class initializer
++**
++** Returns:     none
++**
++*******************************************************************************/
++
++void NfcAdaptation::InitializeFuzzer() {
++  const char* func = "NfcAdaptation::InitializeFuzzer";
++  const char* argv[] = {"libnfc_nci"};
++
++  logging::SetMinLogLevel(3);
++  // Init log tag
++  base::CommandLine::Init(1, argv);
++
++  // Android already logs thread_id, proc_id, timestamp, so disable those.
++  logging::SetLogItems(false, false, false, false);
++
++  DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: enter", func);
++
++  nfc_storage_path = NfcConfig::getString(NAME_NFA_STORAGE, "/data/nfc");
++
++  if (NfcConfig::hasKey(NAME_NFA_DM_CFG)) {
++    std::vector<uint8_t> dm_config = NfcConfig::getBytes(NAME_NFA_DM_CFG);
++    if (dm_config.size() > 0) nfa_dm_cfg.auto_detect_ndef = dm_config[0];
++    if (dm_config.size() > 1) nfa_dm_cfg.auto_read_ndef = dm_config[1];
++    if (dm_config.size() > 2) nfa_dm_cfg.auto_presence_check = dm_config[2];
++    if (dm_config.size() > 3) nfa_dm_cfg.presence_check_option = dm_config[3];
++    // NOTE: The timeout value is not configurable here because the endianess
++    // of a byte array is ambiguous and needlessly difficult to configure.
++    // If this value needs to be configgurable, a numeric config option should
++    // be used.
++  }
++
++  if (NfcConfig::hasKey(NAME_NFA_MAX_EE_SUPPORTED)) {
++    nfa_ee_max_ee_cfg = NfcConfig::getUnsigned(NAME_NFA_MAX_EE_SUPPORTED);
++    DLOG_IF(INFO, nfc_debug_enabled)
++        << StringPrintf("%s: Overriding NFA_EE_MAX_EE_SUPPORTED to use %d",
++                        func, nfa_ee_max_ee_cfg);
++  }
++
++  if (NfcConfig::hasKey(NAME_NFA_POLL_BAIL_OUT_MODE)) {
++    nfa_poll_bail_out_mode =
++        NfcConfig::getUnsigned(NAME_NFA_POLL_BAIL_OUT_MODE);
++    DLOG_IF(INFO, nfc_debug_enabled)
++        << StringPrintf("%s: Overriding NFA_POLL_BAIL_OUT_MODE to use %d", func,
++                        nfa_poll_bail_out_mode);
++  }
++
++  if (NfcConfig::hasKey(NAME_NFA_PROPRIETARY_CFG)) {
++    std::vector<uint8_t> p_config =
++        NfcConfig::getBytes(NAME_NFA_PROPRIETARY_CFG);
++    if (p_config.size() > 0)
++      nfa_proprietary_cfg.pro_protocol_18092_active = p_config[0];
++    if (p_config.size() > 1)
++      nfa_proprietary_cfg.pro_protocol_b_prime = p_config[1];
++    if (p_config.size() > 2)
++      nfa_proprietary_cfg.pro_protocol_dual = p_config[2];
++    if (p_config.size() > 3)
++      nfa_proprietary_cfg.pro_protocol_15693 = p_config[3];
++    if (p_config.size() > 4)
++      nfa_proprietary_cfg.pro_protocol_kovio = p_config[4];
++    if (p_config.size() > 5) nfa_proprietary_cfg.pro_protocol_mfc = p_config[5];
++    if (p_config.size() > 6)
++      nfa_proprietary_cfg.pro_discovery_kovio_poll = p_config[6];
++    if (p_config.size() > 7)
++      nfa_proprietary_cfg.pro_discovery_b_prime_poll = p_config[7];
++    if (p_config.size() > 8)
++      nfa_proprietary_cfg.pro_discovery_b_prime_listen = p_config[8];
++  }
++
++  // Configure whitelist of HCI host ID's
++  // See specification: ETSI TS 102 622, section 6.1.3.1
++  if (NfcConfig::hasKey(NAME_DEVICE_HOST_WHITE_LIST)) {
++    host_whitelist = NfcConfig::getBytes(NAME_DEVICE_HOST_WHITE_LIST);
++    nfa_hci_cfg.num_whitelist_host = host_whitelist.size();
++    nfa_hci_cfg.p_whitelist = &host_whitelist[0];
++  }
++
++  initializeGlobalDebugEnabledFlag();
++
++  verify_stack_non_volatile_store();
++  if (NfcConfig::hasKey(NAME_PRESERVE_STORAGE) &&
++      NfcConfig::getUnsigned(NAME_PRESERVE_STORAGE) == 1) {
++    DLOG_IF(INFO, nfc_debug_enabled)
++        << StringPrintf("%s: preserve stack NV store", __func__);
++  } else {
++    delete_stack_non_volatile_store(FALSE);
++  }
++
++  GKI_init();
++  GKI_enable();
++  debug_nfcsnoop_init();
++  DLOG_IF(INFO, nfc_debug_enabled) << StringPrintf("%s: exit", func);
++}
++
++
+ /*******************************************************************************
+ **
+ ** Function:    NfcAdaptation::Finalize()
+diff --git a/src/gki/common/gki_buffer.cc b/src/gki/common/gki_buffer.cc
+index dbb1d8b..eaab3df 100644
+--- a/src/gki/common/gki_buffer.cc
++++ b/src/gki/common/gki_buffer.cc
+@@ -310,6 +310,9 @@ void* GKI_getbuf(uint16_t size) {
+       p_hdr->status = BUF_STATUS_UNLINKED;
+       p_hdr->p_next = nullptr;
+       p_hdr->Type = 0;
++    #ifdef FUZZ
++      p_hdr->p_this = p_hdr;
++    #endif //FUZZ
+       return ((void*)((uint8_t*)p_hdr + BUFFER_HDR_SIZE));
+     }
+   }
+@@ -371,6 +374,9 @@ void* GKI_getpoolbuf(uint8_t pool_id) {
+     p_hdr->status = BUF_STATUS_UNLINKED;
+     p_hdr->p_next = nullptr;
+     p_hdr->Type = 0;
++  #ifdef FUZZ
++    p_hdr->p_this = p_hdr;
++  #endif //FUZZ
+ 
+     return ((void*)((uint8_t*)p_hdr + BUFFER_HDR_SIZE));
+   }
+@@ -424,11 +430,23 @@ void GKI_freebuf(void* p_buf) {
+   */
+   Q = &gki_cb.com.freeq[p_hdr->q_id];
+   if (Q->p_last)
++#ifdef FUZZ
++    Q->p_last->p_next = p_hdr->p_this;
++#else //FUZZ
+     Q->p_last->p_next = p_hdr;
++#endif
+   else
++#ifdef FUZZ
++    Q->p_first = p_hdr->p_this;
++#else //FUZZ
+     Q->p_first = p_hdr;
++#endif
+ 
++#ifdef FUZZ
++  Q->p_last = p_hdr->p_this;
++#else //FUZZ
+   Q->p_last = p_hdr;
++#endif
+   p_hdr->p_next = nullptr;
+   p_hdr->status = BUF_STATUS_FREE;
+   p_hdr->task_id = GKI_INVALID_TASK;
+@@ -473,9 +491,10 @@ uint16_t GKI_get_buf_size(void* p_buf) {
+ ** Returns          TRUE if there is a problem, else FALSE
+ **
+ *******************************************************************************/
+-bool gki_chk_buf_damage(void* p_buf) {
+-#if (GKI_ENABLE_BUF_CORRUPTION_CHECK == TRUE)
+-
++bool gki_chk_buf_damage(void* __attribute__((unused)) p_buf) {
++#ifdef FUZZ
++  return false;
++#else
+   uint32_t* magic;
+   magic = (uint32_t*)((uint8_t*)p_buf + GKI_get_buf_size(p_buf));
+ 
+@@ -484,11 +503,6 @@ bool gki_chk_buf_damage(void* p_buf) {
+   if (*magic == MAGIC_NO) return false;
+ 
+   return true;
+-
+-#else
+-
+-  return false;
+-
+ #endif
+ }
+ 
+diff --git a/src/gki/common/gki_common.h b/src/gki/common/gki_common.h
+index 5cf7028..f1f9a5a 100644
+--- a/src/gki/common/gki_common.h
++++ b/src/gki/common/gki_common.h
+@@ -54,6 +54,9 @@ typedef struct _buffer_hdr {
+   uint8_t task_id;            /* task which allocated the buffer*/
+   uint8_t status;             /* FREE, UNLINKED or QUEUED */
+   uint8_t Type;
++#ifdef FUZZ
++  struct _buffer_hdr* p_this; /* pointer to indicate the buffer_hdr to put in queue when freed. */
++#endif //FUZZ
+ } BUFFER_HDR_T;
+ 
+ typedef struct _free_queue {
+diff --git a/src/gki/common/gki_time.cc b/src/gki/common/gki_time.cc
+index 1265220..6dcf983 100644
+--- a/src/gki/common/gki_time.cc
++++ b/src/gki/common/gki_time.cc
+@@ -187,7 +187,9 @@ void GKI_start_timer(uint8_t tnum, int32_t ticks, bool is_continuous) {
+   int32_t orig_ticks;
+   uint8_t task_id = GKI_get_taskid();
+   bool bad_timer = false;
+-
++#ifdef FUZZ
++  return;
++#endif
+   if (ticks <= 0) ticks = 1;
+ 
+   orig_ticks = ticks; /* save the ticks in case adjustment is necessary */
+@@ -284,7 +286,9 @@ void GKI_start_timer(uint8_t tnum, int32_t ticks, bool is_continuous) {
+ *******************************************************************************/
+ void GKI_stop_timer(uint8_t tnum) {
+   uint8_t task_id = GKI_get_taskid();
+-
++#ifdef FUZZ
++  return;
++#endif
+   GKI_disable();
+ 
+   switch (tnum) {
+diff --git a/src/gki/ulinux/gki_ulinux.cc b/src/gki/ulinux/gki_ulinux.cc
+index 093b58d..91a52fb 100644
+--- a/src/gki/ulinux/gki_ulinux.cc
++++ b/src/gki/ulinux/gki_ulinux.cc
+@@ -73,7 +73,14 @@ typedef struct {
+   pthread_mutex_t* pMutex; /* for android*/
+ } gki_pthread_info_t;
+ gki_pthread_info_t gki_pthread_info[GKI_MAX_TASKS];
+-
++#ifdef FUZZ
++void gki_reset() {
++  memset(&gki_cb, 0, sizeof(gki_cb));
++  gki_buffer_init();
++  gki_timers_init();
++  gki_cb.com.OSTicks = (uint32_t)times(0);
++}
++#endif
+ /*******************************************************************************
+ **
+ ** Function         gki_task_entry
+diff --git a/src/include/NfcAdaptation.h b/src/include/NfcAdaptation.h
+index df12a44..15d5b6c 100644
+--- a/src/include/NfcAdaptation.h
++++ b/src/include/NfcAdaptation.h
+@@ -89,6 +89,9 @@ class NfcAdaptation {
+  public:
+   virtual ~NfcAdaptation();
+   void Initialize();
++#ifdef FUZZ
++  void InitializeFuzzer();
++#endif
+   void Finalize();
+   void FactoryReset();
+   void DeviceShutdown();
+diff --git a/src/nfa/dm/nfa_dm_act.cc b/src/nfa/dm/nfa_dm_act.cc
+index aa494fb..04f0979 100644
+--- a/src/nfa/dm/nfa_dm_act.cc
++++ b/src/nfa/dm/nfa_dm_act.cc
+@@ -633,7 +633,13 @@ void nfa_dm_conn_cback_event_notify(uint8_t event, tNFA_CONN_EVT_DATA* p_data) {
+     if (nfa_dm_cb.p_excl_conn_cback)
+       (*nfa_dm_cb.p_excl_conn_cback)(event, p_data);
+   } else {
++#ifdef FUZZ
++    if (nfa_dm_cb.p_conn_cback) {
++      (*nfa_dm_cb.p_conn_cback)(event, p_data);
++    }
++#else
+     (*nfa_dm_cb.p_conn_cback)(event, p_data);
++#endif
+   }
+ }
+ 
+@@ -660,8 +666,15 @@ void nfa_dm_rel_excl_rf_control_and_notify(void) {
+ 
+   /* Notify app that exclusive RF control has stopped */
+   conn_evt.status = NFA_STATUS_OK;
++#ifdef FUZZ
++  if (nfa_dm_cb.p_excl_conn_cback) {
++    (*nfa_dm_cb.p_excl_conn_cback)(NFA_EXCLUSIVE_RF_CONTROL_STOPPED_EVT,
++                                 &conn_evt);
++  }
++#else
+   (*nfa_dm_cb.p_excl_conn_cback)(NFA_EXCLUSIVE_RF_CONTROL_STOPPED_EVT,
+                                  &conn_evt);
++#endif
+   nfa_dm_cb.p_excl_conn_cback = nullptr;
+   nfa_dm_cb.p_excl_ndef_cback = nullptr;
+ }
+@@ -680,7 +693,7 @@ bool nfa_dm_act_request_excl_rf_ctrl(tNFA_DM_MSG* p_data) {
+ 
+   DLOG_IF(INFO, nfc_debug_enabled) << __func__;
+ 
+-  if (!nfa_dm_cb.p_excl_conn_cback) {
++  if (!nfa_dm_cb.p_excl_conn_cback && p_data->req_excl_rf_ctrl.p_conn_cback) {
+     if (nfa_dm_cb.disc_cb.disc_state != NFA_DM_RFST_IDLE) {
+       conn_evt.status = NFA_STATUS_FAILED;
+       (*p_data->req_excl_rf_ctrl.p_conn_cback)(
+@@ -702,8 +715,10 @@ bool nfa_dm_act_request_excl_rf_ctrl(tNFA_DM_MSG* p_data) {
+     LOG(ERROR) << StringPrintf("Exclusive rf control already requested");
+ 
+     conn_evt.status = NFA_STATUS_FAILED;
++#ifndef FUZZ
+     (*p_data->req_excl_rf_ctrl.p_conn_cback)(
+         NFA_EXCLUSIVE_RF_CONTROL_STARTED_EVT, &conn_evt);
++#endif
+   }
+ 
+   return true;
+diff --git a/src/nfa/dm/nfa_dm_api.cc b/src/nfa/dm/nfa_dm_api.cc
+index 20b1730..c37bc64 100644
+--- a/src/nfa/dm/nfa_dm_api.cc
++++ b/src/nfa/dm/nfa_dm_api.cc
+@@ -1019,9 +1019,9 @@ tNFA_STATUS NFA_RegisterNDefTypeHandler(bool handle_whole_message, tNFA_TNF tnf,
+     p_msg->name_len = type_name_len;
+     p_msg->p_ndef_cback = p_ndef_cback;
+     memcpy(p_msg->name, p_type_name, type_name_len);
+-
++#ifndef FUZZ
+     nfa_sys_sendmsg(p_msg);
+-
++#endif
+     return (NFA_STATUS_OK);
+   }
+ 
+diff --git a/src/nfa/include/nfa_rw_int.h b/src/nfa/include/nfa_rw_int.h
+index f9a53c2..c8ed15e 100644
+--- a/src/nfa/include/nfa_rw_int.h
++++ b/src/nfa/include/nfa_rw_int.h
+@@ -315,6 +315,9 @@ typedef struct {
+   uint8_t i93_block_size;
+   uint16_t i93_num_block;
+   uint8_t i93_uid[I93_UID_BYTE_LEN];
++#ifdef FUZZ
++  bool detect_succeeded;
++#endif
+ } tNFA_RW_CB;
+ extern tNFA_RW_CB nfa_rw_cb;
+ 
+diff --git a/src/nfa/rw/nfa_rw_act.cc b/src/nfa/rw/nfa_rw_act.cc
+index 0c0e608..42d9db9 100644
+--- a/src/nfa/rw/nfa_rw_act.cc
++++ b/src/nfa/rw/nfa_rw_act.cc
+@@ -44,7 +44,11 @@ uint8_t NFA_RW_TAG_SLP_REQ[] = {0x50, 0x00};
+ /* Local static function prototypes */
+ static tNFC_STATUS nfa_rw_start_ndef_read(void);
+ static tNFC_STATUS nfa_rw_start_ndef_write(void);
++#ifdef FUZZ
++tNFC_STATUS nfa_rw_start_ndef_detection(void);
++#else
+ static tNFC_STATUS nfa_rw_start_ndef_detection(void);
++#endif
+ static tNFC_STATUS nfa_rw_config_tag_ro(bool b_hard_lock);
+ static bool nfa_rw_op_req_while_busy(tNFA_RW_MSG* p_data);
+ static bool nfa_rw_op_req_while_inactive(tNFA_RW_MSG* p_data);
+@@ -52,7 +56,11 @@ static void nfa_rw_error_cleanup(uint8_t event);
+ static void nfa_rw_presence_check(tNFA_RW_MSG* p_data);
+ static void nfa_rw_handle_t2t_evt(tRW_EVENT event, tRW_DATA* p_rw_data);
+ static bool nfa_rw_detect_ndef(void);
++#ifdef FUZZ
++void nfa_rw_cback(tRW_EVENT event, tRW_DATA* p_rw_data);
++#else
+ static void nfa_rw_cback(tRW_EVENT event, tRW_DATA* p_rw_data);
++#endif
+ static void nfa_rw_handle_mfc_evt(tRW_EVENT event, tRW_DATA* p_rw_data);
+ 
+ /*******************************************************************************
+@@ -230,6 +238,11 @@ static void nfa_rw_handle_ndef_detect(tRW_DATA* p_rw_data) {
+     else
+       nfa_rw_cb.flags &= ~NFA_RW_FL_TAG_IS_READONLY;
+ 
++#ifdef FUZZ
++      //Give RW for reading
++      nfa_rw_cb.flags &= ~NFA_RW_FL_TAG_IS_READONLY;
++      nfa_rw_cb.detect_succeeded = true;
++#endif
+     /* Determine what operation triggered the NDEF detection procedure */
+     if (nfa_rw_cb.cur_op == NFA_RW_OP_READ_NDEF) {
+       /* if ndef detection was done as part of ndef-read operation, then perform
+@@ -1492,7 +1505,11 @@ static void nfa_rw_handle_mfc_evt(tRW_EVENT event, tRW_DATA* p_rw_data) {
+ ** Returns          Nothing
+ **
+ *******************************************************************************/
++#ifdef FUZZ
++void nfa_rw_cback(tRW_EVENT event, tRW_DATA* p_rw_data) {
++#else
+ static void nfa_rw_cback(tRW_EVENT event, tRW_DATA* p_rw_data) {
++#endif
+   DLOG_IF(INFO, nfc_debug_enabled)
+       << StringPrintf("nfa_rw_cback: event=0x%02x", event);
+ 
+@@ -1529,7 +1546,11 @@ static void nfa_rw_cback(tRW_EVENT event, tRW_DATA* p_rw_data) {
+ ** Returns          Nothing
+ **
+ *******************************************************************************/
++#ifdef FUZZ
++tNFC_STATUS nfa_rw_start_ndef_detection(void) {
++#else
+ static tNFC_STATUS nfa_rw_start_ndef_detection(void) {
++#endif
+   tNFC_PROTOCOL protocol = nfa_rw_cb.protocol;
+   tNFC_STATUS status = NFC_STATUS_FAILED;
+ 
+@@ -1669,7 +1690,10 @@ static bool nfa_rw_detect_ndef() {
+ static tNFC_STATUS nfa_rw_start_ndef_write(void) {
+   tNFC_PROTOCOL protocol = nfa_rw_cb.protocol;
+   tNFC_STATUS status = NFC_STATUS_FAILED;
+-
++#ifdef FUZZ
++  //make it read write:
++  nfa_rw_cb.flags &= ~NFA_RW_FL_TAG_IS_READONLY;
++#endif
+   if (nfa_rw_cb.flags & NFA_RW_FL_TAG_IS_READONLY) {
+     /* error: ndef tag is read-only */
+     status = NFC_STATUS_FAILED;
+@@ -1759,12 +1783,19 @@ static bool nfa_rw_read_ndef() {
+ ** Returns          TRUE (message buffer to be freed by caller)
+ **
+ *******************************************************************************/
++#ifdef FUZZ
++bool nfa_rw_write_ndef(tNFA_RW_MSG* p_data) {
++#else
+ static bool nfa_rw_write_ndef(tNFA_RW_MSG* p_data) {
++#endif
++#ifndef FUZZ
+   tNDEF_STATUS ndef_status;
++#endif
+   tNFA_STATUS write_status = NFA_STATUS_OK;
+   tNFA_CONN_EVT_DATA conn_evt_data;
+   DLOG_IF(INFO, nfc_debug_enabled) << __func__;
+ 
++#ifndef FUZZ
+   /* Validate NDEF message */
+   ndef_status = NDEF_MsgValidate(p_data->op_req.params.write_ndef.p_data,
+                                  p_data->op_req.params.write_ndef.len, false);
+@@ -1778,7 +1809,7 @@ static bool nfa_rw_write_ndef(tNFA_RW_MSG* p_data) {
+     nfa_dm_act_conn_cback_notify(NFA_WRITE_CPLT_EVT, &conn_evt_data);
+     return true;
+   }
+-
++#endif
+   /* Store pointer to source NDEF */
+   nfa_rw_cb.p_ndef_wr_buf = p_data->op_req.params.write_ndef.p_data;
+   nfa_rw_cb.ndef_wr_len = p_data->op_req.params.write_ndef.len;
+@@ -1948,7 +1979,11 @@ bool nfa_rw_presence_check_timeout(__attribute__((unused))
+ ** Returns          Nothing
+ **
+ *******************************************************************************/
++#ifdef FUZZ
++void nfa_rw_format_tag() {
++#else
+ static void nfa_rw_format_tag() {
++#endif
+   tNFC_PROTOCOL protocol = nfa_rw_cb.protocol;
+   tNFC_STATUS status = NFC_STATUS_FAILED;
+ 
+diff --git a/src/nfc/include/rw_int.h b/src/nfc/include/rw_int.h
+index f4027a5..bb2667b 100644
+--- a/src/nfc/include/rw_int.h
++++ b/src/nfc/include/rw_int.h
+@@ -734,6 +734,9 @@ typedef struct {
+   uint8_t* p_update_data; /* pointer of data to update        */
+   uint16_t rw_length;     /* bytes to read/write              */
+   uint16_t rw_offset;     /* offset to read/write             */
++#ifdef FUZZ
++  bool idle;
++#endif
+ } tRW_I93_CB;
+ 
+ /* RW memory control blocks */
+diff --git a/src/nfc/nfc/nfc_main.cc b/src/nfc/nfc/nfc_main.cc
+index a1a2c7f..5d020d4 100644
+--- a/src/nfc/nfc/nfc_main.cc
++++ b/src/nfc/nfc/nfc_main.cc
+@@ -744,7 +744,32 @@ void NFC_Init(tHAL_NFC_ENTRY* p_hal_entry_tbl) {
+   llcp_init();
+   NFC_SET_MAX_CONN_DEFAULT();
+ }
++#ifdef FUZZ
++void NFC_Init_RW(tHAL_NFC_ENTRY* p_hal_entry_tbl) {
++  int xx;
++
++  /* Clear nfc control block */
++  memset(&nfc_cb, 0, sizeof(tNFC_CB));
+ 
++  /* Reset the nfc control block */
++  for (xx = 0; xx < NCI_MAX_CONN_CBS; xx++) {
++    nfc_cb.conn_cb[xx].conn_id = NFC_ILLEGAL_CONN_ID;
++  }
++
++  /* NCI init */
++  nfc_cb.p_hal = p_hal_entry_tbl;
++  nfc_cb.nfc_state = NFC_STATE_NONE;
++  nfc_cb.nci_cmd_window = NCI_MAX_CMD_WINDOW;
++  nfc_cb.nci_wait_rsp_tout = NFC_CMD_CMPL_TIMEOUT;
++  nfc_cb.p_disc_maps = nfc_interface_mapping;
++  nfc_cb.num_disc_maps = NFC_NUM_INTERFACE_MAP;
++  nfc_cb.nci_ctrl_size = NCI_CTRL_INIT_SIZE;
++  nfc_cb.reassembly = true;
++  nfc_cb.nci_version = NCI_VERSION_UNKNOWN;
++  rw_init();
++  NFC_SET_MAX_CONN_DEFAULT();
++}
++#endif
+ /*******************************************************************************
+ **
+ ** Function         NFC_GetLmrtSize
+@@ -1063,7 +1088,11 @@ void NFC_SetReassemblyFlag(bool reassembly) { nfc_cb.reassembly = reassembly; }
+ **
+ *******************************************************************************/
+ tNFC_STATUS NFC_SendData(uint8_t conn_id, NFC_HDR* p_data) {
++#ifdef FUZZ
++  return NFC_STATUS_OK;
++#endif
+   tNFC_STATUS status = NFC_STATUS_FAILED;
++
+   tNFC_CONN_CB* p_cb = nfc_find_conn_cb_by_conn_id(conn_id);
+ 
+   if (p_cb && p_data &&
+diff --git a/src/nfc/nfc/nfc_ncif.cc b/src/nfc/nfc/nfc_ncif.cc
+index 462ddfe..017e3b6 100644
+--- a/src/nfc/nfc/nfc_ncif.cc
++++ b/src/nfc/nfc/nfc_ncif.cc
+@@ -259,6 +259,9 @@ void nfc_ncif_check_cmd_queue(NFC_HDR* p_buf) {
+   /* If there are commands waiting in the xmit queue, or if the controller
+    * cannot accept any more commands, */
+   /* then enqueue this command */
++#ifdef FUZZ
++  return;
++#endif
+   if (p_buf) {
+     if ((nfc_cb.nci_cmd_xmit_q.count) || (nfc_cb.nci_cmd_window == 0)) {
+       GKI_enqueue(&nfc_cb.nci_cmd_xmit_q, p_buf);
+diff --git a/src/nfc/nfc/nfc_task.cc b/src/nfc/nfc/nfc_task.cc
+index 19bbb8c..7ca75b2 100644
+--- a/src/nfc/nfc/nfc_task.cc
++++ b/src/nfc/nfc/nfc_task.cc
+@@ -58,6 +58,21 @@ extern bool nfc_debug_enabled;
+ **
+ *******************************************************************************/
+ void nfc_start_timer(TIMER_LIST_ENT* p_tle, uint16_t type, uint32_t timeout) {
++#ifdef FUZZ
++  /* if timer list is currently empty, start periodic GKI timer */
++  if (nfc_cb.timer_queue.p_first == NULL) {
++    /* if timer starts on other than NFC task (scritp wrapper) */
++    GKI_start_timer(NFC_TIMER_ID, GKI_SECS_TO_TICKS(1), true);
++  }
++
++  GKI_remove_from_timer_list(&nfc_cb.timer_queue, p_tle);
++
++  p_tle->event = type;
++  p_tle->ticks = timeout; /* Save the number of seconds for the timer */
++
++  GKI_add_to_timer_list(&nfc_cb.timer_queue, p_tle);
++}
++#else
+   NFC_HDR* p_msg;
+ 
+   /* if timer list is currently empty, start periodic GKI timer */
+@@ -83,6 +98,7 @@ void nfc_start_timer(TIMER_LIST_ENT* p_tle, uint16_t type, uint32_t timeout) {
+ 
+   GKI_add_to_timer_list(&nfc_cb.timer_queue, p_tle);
+ }
++#endif
+ 
+ /*******************************************************************************
+ **
+@@ -175,8 +191,22 @@ void nfc_stop_timer(TIMER_LIST_ENT* p_tle) {
+ *******************************************************************************/
+ void nfc_start_quick_timer(TIMER_LIST_ENT* p_tle, uint16_t type,
+                            uint32_t timeout) {
+-  NFC_HDR* p_msg;
++#ifdef FUZZ
++  /* if timer list is currently empty, start periodic GKI timer */
++  if (nfc_cb.quick_timer_queue.p_first == nullptr) {
++      GKI_start_timer(NFC_QUICK_TIMER_ID,
++                      ((GKI_SECS_TO_TICKS(1) / QUICK_TIMER_TICKS_PER_SEC)),
++                      true);
++  }
+ 
++  GKI_remove_from_timer_list(&nfc_cb.quick_timer_queue, p_tle);
++  p_tle->event = type;
++  p_tle->ticks = timeout; /* Save the number of ticks for the timer */
++
++  GKI_add_to_timer_list(&nfc_cb.quick_timer_queue, p_tle);
++}
++#else
++  NFC_HDR* p_msg;
+   /* if timer list is currently empty, start periodic GKI timer */
+   if (nfc_cb.quick_timer_queue.p_first == nullptr) {
+     /* if timer starts on other than NFC task (scritp wrapper) */
+@@ -194,14 +224,12 @@ void nfc_start_quick_timer(TIMER_LIST_ENT* p_tle, uint16_t type,
+                       true);
+     }
+   }
+-
+   GKI_remove_from_timer_list(&nfc_cb.quick_timer_queue, p_tle);
+-
+   p_tle->event = type;
+   p_tle->ticks = timeout; /* Save the number of ticks for the timer */
+-
+   GKI_add_to_timer_list(&nfc_cb.quick_timer_queue, p_tle);
+ }
++#endif
+ 
+ /*******************************************************************************
+ **
+@@ -332,6 +360,13 @@ void nfc_task_shutdown_nfcc(void) {
+   }
+ }
+ 
++#ifdef FUZZ
++//Reset the NFC controller
++void reset_task() {
++  nfc_set_state(NFC_STATE_CORE_INIT);
++  nci_snd_core_reset(NCI_RESET_TYPE_RESET_CFG);
++}
++#endif
+ /*******************************************************************************
+ **
+ ** Function         nfc_task
+diff --git a/src/nfc/tags/rw_t2t_ndef.cc b/src/nfc/tags/rw_t2t_ndef.cc
+index 707f86b..12d4199 100644
+--- a/src/nfc/tags/rw_t2t_ndef.cc
++++ b/src/nfc/tags/rw_t2t_ndef.cc
+@@ -387,6 +387,32 @@ static void rw_t2t_handle_lock_read_rsp(uint8_t* p_data) {
+   }
+ }
+ 
++#ifdef FUZZ
++//converts uint8_t to one of the tlv states (see tags_defs.h)
++static uint8_t num2tlv(uint8_t input) {
++  switch (input % 6) {
++    case 0:
++      return TAG_NULL_TLV;
++    case 1:
++      return TAG_LOCK_CTRL_TLV;
++    case 2:
++      return TAG_MEM_CTRL_TLV;
++    case 3:
++      return TAG_NDEF_TLV;
++    case 4:
++      return TAG_PROPRIETARY_TLV;
++    case 5:
++      return TAG_TERMINATOR_TLV;
++    default:
++      return TAG_NDEF_TLV;
++  }
++}
++#else
++static uint8_t num2tlv(uint8_t input) {
++  return input;
++}
++#endif //FUZZ
++
+ /*******************************************************************************
+ **
+ ** Function         rw_t2t_handle_tlv_detect_rsp
+@@ -430,7 +456,7 @@ static void rw_t2t_handle_tlv_detect_rsp(uint8_t* p_data) {
+     switch (p_t2t->substate) {
+       case RW_T2T_SUBSTATE_WAIT_TLV_DETECT:
+         /* Search for the tlv */
+-        p_t2t->found_tlv = p_data[offset++];
++        p_t2t->found_tlv = num2tlv(p_data[offset++]);
+         switch (p_t2t->found_tlv) {
+           case TAG_NULL_TLV: /* May be used for padding. SHALL ignore this */
+             break;
